@@ -1,34 +1,60 @@
-import pyautogui
+import cv2
+import torch
 import time
-import keyboard
+import pyautogui
+
+
+model = torch.hub.load('ultralytics/yolov5', 'custom', path='best.pt')
+
+detection_to_key = {"Stop": "esc", "Thumbs up": "up", "Thumbs Down": "down", "Left": "left", "Right": "right"}
+
+
+class KeyboardInteractor:
+    def __init__(self):
+        self.last_move_time: int | None = None
+        self.last_move: str | None = None
+
+    def move(self, move: str):
+        if self.last_move == move and time.time() - self.last_move_time < 0.3:
+            print(f"Did not perform the move {move}, too little time passed since last same move")
+            return
+
+        pyautogui.press(move)
+        self.last_move_time = time.time()
+        self.last_move = move
+        print(f"Performed move {move}")
 
 
 if __name__ == '__main__':
-    """Basic steering setup"""
-    last_pressed = None
-    last_pressed_time = None
-    update_pressed_time = True
+    cam = cv2.VideoCapture(0)
+    interactor = KeyboardInteractor()
+
+    if not cam.isOpened():
+        print("Error: Camera could not be opened.")
+        exit()
+
     while True:
-        update_pressed_time = False
-        if keyboard.is_pressed('t') and (last_pressed is None or time.time() - last_pressed_time > 0.3 or last_pressed != 't'):
-            last_pressed = 't'
-            update_pressed_time = True
-            pyautogui.press('up')
+        ret, frame = cam.read()
 
-        if keyboard.is_pressed('f') and (last_pressed is None or time.time() - last_pressed_time > 0.3 or last_pressed != 'f'):
-            last_pressed = 'f'
-            update_pressed_time = True
-            pyautogui.press('left')
+        if not ret:
+            print("Error: Unable to read frame from camera.")
+            break
 
-        if keyboard.is_pressed('g') and (last_pressed is None or time.time() - last_pressed_time > 0.3 or last_pressed != 'g'):
-            last_pressed = 'g'
-            update_pressed_time = True
-            pyautogui.press('down')
+        results = model(frame)
 
-        if keyboard.is_pressed('h') and (last_pressed is None or time.time() - last_pressed_time > 0.3 or last_pressed != 'h'):
-            last_pressed = 'h'
-            update_pressed_time = True
-            pyautogui.press('right')
+        for *xyxy, conf, cls in results.xyxy[0]: # iterate over the predictions
+            interactor.move(detection_to_key[model.names[int(cls)]]) # this makes the move
+            x1, y1, x2, y2 = map(int, xyxy)
+            label = f"{model.names[int(cls)]} {conf:.2f}"
 
-        if update_pressed_time:
-            last_pressed_time = time.time()
+            cv2.rectangle(frame, (x1, y1), (x2, y2), (0, 255, 0), 2)
+            cv2.putText(frame, label, (x1, y1 - 10), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 255, 0), 2)
+
+        cv2.imshow("", frame)
+
+        # Break loop on pressing 'q'
+        if cv2.waitKey(1) & 0xFF == ord('q'):
+            break
+
+    cam.release()
+    cv2.destroyAllWindows()
